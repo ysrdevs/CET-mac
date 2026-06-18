@@ -684,7 +684,8 @@ rpc.exports = {
             const sys=getScriptableSystem(giRes,'PlayerDevelopmentSystem');
             if(!sys){ log('could not get PlayerDevelopmentSystem instance'); return null; }
             const gdd=resolveFunc('PlayerDevelopmentSystem','GetDevelopmentData'); if(!gdd){ log('GetDevelopmentData not found'); return null; }
-            const owners=[]; if(devOwner) owners.push(devOwner); if(player) owners.push(player); for(const c of playerCands) owners.push(c);
+            const owners=[]; const ap=authPlayer(giRes); if(ap) owners.push(ap);   // authoritative local player first
+            if(devOwner) owners.push(devOwner); if(player) owners.push(player); for(const c of playerCands) owners.push(c);
             const tried=new Set();
             for(const o of owners){ const k=o.toString(); if(tried.has(k)) continue; tried.add(k);
                 try{ const r=callFunc(gdd.fn, sys, gdd.retType, ['@'+o]); const d=r.readPointer();
