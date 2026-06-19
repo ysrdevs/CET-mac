@@ -39,6 +39,9 @@ static bool g_imguiInit = false;
 static unsigned long g_frame = 0;
 static std::atomic<bool> g_show{false};
 static std::atomic<bool> g_focusInput{false};
+static std::atomic<int>  g_activeTab{0};        // 0 Console, 1 Items, 2 Quick
+static std::atomic<bool> g_tabReq{false};       // a keyboard tab-switch was requested
+static std::atomic<bool> g_itemsTabEntered{false};
 static std::vector<std::string> g_lines;
 static char g_input[512] = {0};
 static std::vector<std::string> g_history;   // submitted commands (oldest first)
@@ -281,10 +284,20 @@ static void drawItemsTab() {
     ImGui::SetNextItemWidth(110);
     if (ImGui::InputInt("qty", &g_giveQty)) { if (g_giveQty < 1) g_giveQty = 1; }
     ImGui::SameLine();
+    if (g_itemsTabEntered.exchange(false)) ImGui::SetKeyboardFocusHere();   // focus the search box on tab enter
     ImGui::SetNextItemWidth(-1);
-    ImGui::InputTextWithHint("##itemsearch", "search items by name or id...", g_itemFilter, sizeof(g_itemFilter));
+    bool entered = ImGui::InputTextWithHint("##itemsearch", "type to search, Enter spawns the top result",
+                                            g_itemFilter, sizeof(g_itemFilter), ImGuiInputTextFlags_EnterReturnsTrue);
     if (g_lastFilter != g_itemFilter) rebuildFilter();
-    ImGui::TextDisabled("%d / %zu items  (click Give to spawn)", (int)g_filtered.size(), g_catalog.size());
+    if (entered && !g_filtered.empty()) {
+        const CatItem& top = g_catalog[g_filtered[0]];
+        runCommand("give " + top.id + " " + std::to_string(g_giveQty));
+        ImGui::SetKeyboardFocusHere(-1);   // keep typing in the search box
+    }
+    if (!g_filtered.empty())
+        ImGui::TextDisabled("Enter spawns: %s   (%d matches)", g_catalog[g_filtered[0]].name.c_str(), (int)g_filtered.size());
+    else
+        ImGui::TextDisabled("no matches");
     ImGui::Separator();
     ImGui::BeginChild("itemlist", ImVec2(0, 0));
     ImGuiListClipper clipper; clipper.Begin((int)g_filtered.size());
@@ -293,7 +306,9 @@ static void drawItemsTab() {
             const CatItem& it = g_catalog[g_filtered[row]];
             ImGui::PushID(row);
             if (ImGui::SmallButton("Give")) runCommand("give " + it.id + " " + std::to_string(g_giveQty));
-            ImGui::SameLine(); ImGui::TextUnformatted(it.name.c_str());
+            ImGui::SameLine();
+            if (row == 0) ImGui::TextColored(ImVec4(1.0f, 0.95f, 0.4f, 1.0f), "%s", it.name.c_str());  // top result (Enter target)
+            else ImGui::TextUnformatted(it.name.c_str());
             ImGui::SameLine(); ImGui::TextDisabled("  %s", it.id.c_str());
             ImGui::PopID();
         }
@@ -323,8 +338,11 @@ static void drawConsole() {
     ImGui::SetNextWindowSize(ImVec2(860, 480), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(48, 48), ImGuiCond_FirstUseEver);
     ImGui::Begin("CET Mac  ( ` or F1 to toggle )");
+    ImGui::TextDisabled("Cmd+1 Console    Cmd+2 Items    Cmd+3 Quick");
+    int req = -1;
+    if (g_tabReq.exchange(false)) req = g_activeTab.load();   // a keyboard tab-switch this frame
     if (ImGui::BeginTabBar("cetmac_tabs")) {
-        if (ImGui::BeginTabItem("Console")) {
+        if (ImGui::BeginTabItem("Console", nullptr, req == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
             ImGui::BeginChild("scroll", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()), false, ImGuiWindowFlags_HorizontalScrollbar);
             for (auto& l : g_lines) ImGui::TextUnformatted(l.c_str());
             if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f) ImGui::SetScrollHereY(1.0f);
@@ -344,8 +362,8 @@ static void drawConsole() {
             }
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Items")) { drawItemsTab(); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Quick")) { drawQuickTab(); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Items", nullptr, req == 1 ? ImGuiTabItemFlags_SetSelected : 0)) { drawItemsTab(); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Quick", nullptr, req == 2 ? ImGuiTabItemFlags_SetSelected : 0)) { drawQuickTab(); ImGui::EndTabItem(); }
         ImGui::EndTabBar();
     }
     ImGui::End();
@@ -399,6 +417,16 @@ static void my_sendEvent(id self, SEL _cmd, NSEvent* ev) {
                 g_show = now;
                 if (now) { g_focusInput = true; NSWindow* w = ev.window; if (w) [w setAcceptsMouseMovedEvents:YES]; }
                 return;  // swallow the toggle key
+            }
+            // Cmd+1 / Cmd+2 / Cmd+3 switch tabs (the game captures the mouse, so tabs are keyboard-driven)
+            if (g_show.load() && (ev.modifierFlags & NSEventModifierFlagCommand)) {
+                int tab = (kc == 18) ? 0 : (kc == 19) ? 1 : (kc == 20) ? 2 : -1;
+                if (tab >= 0) {
+                    g_activeTab = tab; g_tabReq = true;
+                    if (tab == 0) g_focusInput = true;
+                    if (tab == 1) g_itemsTabEntered = true;
+                    return;  // swallow
+                }
             }
         }
         if (g_show.load()) {
