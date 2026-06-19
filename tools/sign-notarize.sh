@@ -53,9 +53,9 @@ rm -f "$RWDMG"
 hdiutil create -volname "$VOL" -srcfolder "$STAGE" -fs HFS+ -format UDRW -ov "$RWDMG"
 MNT="/Volumes/$VOL"
 hdiutil attach "$RWDMG" -nobrowse -noverify -noautoopen >/dev/null
-# Lay the window out as icon view: app on the left, Applications on the right, with a
-# hint as the window title so it's obvious you copy the app over. Non-fatal if Finder
-# automation is unavailable - the Applications shortcut alone still conveys it.
+# Lay the window out as icon view: app on the left, Applications on the right, so it's
+# obvious you copy the app over. Non-fatal if Finder automation is unavailable - the
+# Applications shortcut alone still conveys it.
 osascript <<EOF || echo "  (note: could not style dmg window; Applications shortcut is still present)"
 tell application "Finder"
   tell disk "$VOL"
@@ -70,7 +70,6 @@ tell application "Finder"
     set text size of vopts to 12
     set position of item "$APPNAME" of container window to {150, 200}
     set position of item "Applications" of container window to {410, 200}
-    set name of container window to "CET Mac  -  drag the app into Applications"
     update without registering applications
     delay 1
     close
