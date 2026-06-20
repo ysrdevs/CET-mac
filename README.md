@@ -24,11 +24,24 @@ Platform: macOS arm64. Built against Cyberpunk 2077 v2.3.1 (Steam). GOG support 
 
 [Watch the demo](https://raw.githubusercontent.com/ysrdevs/CET-mac/main/assets/demo.mp4) (adding relic and perk points, weapons, and money, live in-game on macOS).
 
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/search-item.png" width="100%" alt="Search any item and add it"><br><b>Search any item and spawn it</b></td>
+    <td width="50%"><img src="assets/item-stats.png" width="100%" alt="Find any item and its stats"><br><b>Find any item and its stats</b></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/add-points.png" width="100%" alt="Add perks, attributes, and relic points"><br><b>Add perks, attributes, and relic points</b></td>
+    <td width="50%"><img src="assets/teleport-quick-actions.png" width="100%" alt="Teleport utility and quick actions"><br><b>Teleport utility and quick actions</b></td>
+  </tr>
+</table>
+
 ## For players
 
-Prefer a walkthrough? Watch the install video:
+Prefer a walkthrough? Watch the install and usage video:
 
-[![Watch the install video](https://img.youtube.com/vi/V5KFp34nzPg/hqdefault.jpg)](https://www.youtube.com/watch?v=V5KFp34nzPg)
+[![Watch the install and usage video](https://img.youtube.com/vi/VOUMaNLSAV0/hqdefault.jpg)](https://youtu.be/VOUMaNLSAV0)
 
 1. Download `CET-Mac.dmg` from [Releases](../../releases).
 2. Open it and drag CET Mac into your Applications folder.
