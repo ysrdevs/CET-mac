@@ -572,6 +572,27 @@ static void my_sendEvent(id self, SEL _cmd, NSEvent* ev) {
     ((void(*)(id, SEL, id))g_origSendEvent)(self, _cmd, ev);
 }
 
+// Diagnostic: hook CAMetalLayer.nextDrawable (called every frame by any Metal app, regardless of how it
+// presents) to capture the live drawable class - so if presentDrawable* never fires we still learn the path.
+static IMP g_origNextDrawable = NULL;
+static id my_nextDrawable(id self, SEL _cmd) {
+    id d = ((id(*)(id, SEL))g_origNextDrawable)(self, _cmd);
+    static std::atomic<bool> logged{false};
+    if (!logged.exchange(true))
+        olog("nextDrawable FIRED: layer=%s drawable=%s", class_getName(object_getClass(self)),
+             d ? class_getName(object_getClass(d)) : "null");
+    return d;
+}
+static void installLayerDiag() {
+    Class c = objc_getClass("CAMetalLayer");
+    if (!c) { olog("diag: no CAMetalLayer"); return; }
+    Method m = class_getInstanceMethod(c, sel_registerName("nextDrawable"));
+    if (!m) { olog("diag: no nextDrawable on CAMetalLayer"); return; }
+    g_origNextDrawable = method_getImplementation(m);
+    method_setImplementation(m, (IMP)my_nextDrawable);
+    olog("hooked nextDrawable on CAMetalLayer (diag)");
+}
+
 static void installPresentHook() {
     // Force the GPU-family command-buffer class (AGXG16F etc.) to load so the scan below sees it.
     @try {
@@ -625,5 +646,6 @@ static void overlay_init() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         installPresentHook();
         installInputHook();
+        installLayerDiag();
     });
 }
