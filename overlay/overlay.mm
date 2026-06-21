@@ -510,14 +510,30 @@ static void renderOverlay(id<MTLCommandBuffer> cb, id<CAMetalDrawable> drawable)
     [enc endEncoding];
 }
 
-static void my_presentDrawable(id self, SEL _cmd, id drawable) {
+static void runRender(id self, id drawable) {
     @autoreleasepool {
         @try { renderOverlay((id<MTLCommandBuffer>)self, (id<CAMetalDrawable>)drawable); }
         @catch (NSException* e) { olog("render exception: %s", [[e reason] UTF8String]); }
     }
+}
+static IMP origPresentFor(id self, SEL _cmd) {
     Method m = class_getInstanceMethod(object_getClass(self), _cmd);
     auto it = g_origPresents.find((void*)m);
-    if (it != g_origPresents.end()) ((void(*)(id, SEL, id))it->second)(self, _cmd, drawable);
+    return it != g_origPresents.end() ? it->second : NULL;
+}
+// The game may present via presentDrawable:, presentDrawable:atTime:, or presentDrawable:afterMinimumDuration:
+// (newer hardware/displays use the frame-paced variants). Render in all three, then chain to the original.
+static void my_presentDrawable(id self, SEL _cmd, id drawable) {
+    runRender(self, drawable);
+    IMP o = origPresentFor(self, _cmd); if (o) ((void(*)(id, SEL, id))o)(self, _cmd, drawable);
+}
+static void my_presentAtTime(id self, SEL _cmd, id drawable, CFTimeInterval t) {
+    runRender(self, drawable);
+    IMP o = origPresentFor(self, _cmd); if (o) ((void(*)(id, SEL, id, CFTimeInterval))o)(self, _cmd, drawable, t);
+}
+static void my_presentAfter(id self, SEL _cmd, id drawable, CFTimeInterval d) {
+    runRender(self, drawable);
+    IMP o = origPresentFor(self, _cmd); if (o) ((void(*)(id, SEL, id, CFTimeInterval))o)(self, _cmd, drawable, d);
 }
 
 static void my_sendEvent(id self, SEL _cmd, NSEvent* ev) {
@@ -557,26 +573,38 @@ static void my_sendEvent(id self, SEL _cmd, NSEvent* ev) {
 }
 
 static void installPresentHook() {
-    g_presentSel = sel_registerName("presentDrawable:");
+    // Force the GPU-family command-buffer class (AGXG16F etc.) to load so the scan below sees it.
+    @try {
+        id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
+        if (dev) { id<MTLCommandQueue> q = [dev newCommandQueue]; if (q) [q commandBuffer]; }
+    } @catch (NSException*) {}
+    struct Variant { const char* sel; IMP imp; };
+    Variant variants[] = {
+        { "presentDrawable:", (IMP)my_presentDrawable },
+        { "presentDrawable:atTime:", (IMP)my_presentAtTime },
+        { "presentDrawable:afterMinimumDuration:", (IMP)my_presentAfter },
+    };
     int n = objc_getClassList(NULL, 0);
     Class* list = (Class*)malloc(sizeof(Class) * n);
     objc_getClassList(list, n);
     int hooked = 0;
-    // Swizzle EVERY command-buffer class that implements presentDrawable: (dedupe inherited methods by Method
-    // pointer). This catches whichever AGX family class the game presents through, on any chip.
+    // Swizzle every command-buffer class's present methods (all three variants; dedupe inherited methods by
+    // Method pointer). Catches whichever class AND present variant the game uses, on any chip/display.
     for (int i = 0; i < n; i++) {
         const char* nm = class_getName(list[i]);
         if (!nm || !strstr(nm, "CommandBuffer")) continue;
-        Method m = class_getInstanceMethod(list[i], g_presentSel);
-        if (!m) continue;
-        if (g_origPresents.count((void*)m)) continue;   // already hooked (shared/inherited method)
-        g_origPresents[(void*)m] = method_getImplementation(m);
-        method_setImplementation(m, (IMP)my_presentDrawable);
-        hooked++;
-        olog("hooked presentDrawable: on %s", nm);
+        for (auto& v : variants) {
+            Method m = class_getInstanceMethod(list[i], sel_registerName(v.sel));
+            if (!m) continue;
+            if (g_origPresents.count((void*)m)) continue;   // already hooked (shared/inherited method)
+            g_origPresents[(void*)m] = method_getImplementation(m);
+            method_setImplementation(m, v.imp);
+            hooked++;
+            olog("hooked %s on %s", v.sel, nm);
+        }
     }
     free(list);
-    if (!hooked) olog("FATAL: no command-buffer class with presentDrawable: found");
+    if (!hooked) olog("FATAL: no command-buffer present method found");
 }
 
 static void installInputHook() {
