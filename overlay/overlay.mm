@@ -477,6 +477,10 @@ static void drawConsole() {
 }
 
 static void renderOverlay(id<MTLCommandBuffer> cb, id<CAMetalDrawable> drawable) {
+    static std::atomic<bool> firstLogged{false};
+    if (!firstLogged.exchange(true))
+        olog("present FIRED: cb=%s drawable=%p tex=%p", cb ? class_getName(object_getClass(cb)) : "null",
+             (__bridge void*)drawable, (__bridge void*)(drawable ? drawable.texture : nil));   // one-time diagnostic
     if (!cb || !drawable) return;
     id<MTLTexture> tex = drawable.texture; if (!tex) return;
     id<MTLDevice> dev = cb.device;
