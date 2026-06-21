@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 enum Const {
-    static let appVersion = "1.2.0"
+    static let appVersion = "1.3.0"
     static let supportedGameVersion = "2.3.1"
     static let defaultGame = "\(NSHomeDirectory())/Library/Application Support/Steam/steamapps/common/Cyberpunk 2077"
     // Files copied from the app's Resources into <game>/red4ext/ on install.
