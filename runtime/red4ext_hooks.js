@@ -590,6 +590,62 @@ rpc.exports = {
                 }
                 cls=cls.add(0x10).readPointer(); }            // parent
             return null; }
+        // ===== Observe(class, method, cb): fire JS when the game runs a scripted/native function. =====
+        // Built on the existing global-Executor hook below. methodHash=fnv(shortName) matches fn+0x10
+        // (the same key resolveFunc uses); classHash=fnv(className) is matched against the instance's
+        // class chain (walks parents, so subclasses match too). cb(ctx, frame, fn) runs BEFORE the
+        // original. With no cb it's a throttled diagnostic that dumps ctx/frame/signature so we can
+        // decode real args from reality first (verify-the-reference), then write real callbacks.
+        let obsByMethod = {};   // '0x<methodHash>' -> [observer, ...]
+        let obsCount = 0;
+        function classIsA(meta, wantHash){ let c=meta, g=0; while(c && !c.isNull() && g++<24){ try{ if(nameOf(c)===wantHash) return true; }catch(e){ return false; } c=c.add(0x10).readPointer(); } return false; }
+        function obsFire(ob, ctx, frame, fn){
+            if(ob.diag && ob.hits<12){ ob.hits++;
+                let sig=''; try{ sig=sigStr(fn); }catch(e){ sig='sigErr'; }
+                let fr=''; try{ fr=hexp(frame,0x60); }catch(e){ fr='ERR'; }
+                log('OBSERVE '+ob.className+'.'+ob.methodName+' #'+ob.hits+' ctx='+ctx+' frame='+frame+' '+sig);
+                log('   frame[0x60]='+fr); }
+            if(ob.cb){ try{ ob.cb(ctx, frame, fn); }catch(e){ log('observe cb err ('+ob.methodName+'): '+e); } }
+        }
+        // Register an observer. className=null -> match the method on ANY class. Returns the observer obj.
+        function cmObserve(className, methodName, cb, opts){
+            const mh='0x'+fnv(methodName).toString(16);
+            const ch=className?('0x'+fnv(className).toString(16)):null;
+            const ob={ classHash:ch, className:className||'*', methodName:methodName, cb:cb||null, hits:0, diag:(!cb)||!!(opts&&opts.diag) };
+            (obsByMethod[mh]=obsByMethod[mh]||[]).push(ob); obsCount++;
+            log('observe + '+ob.className+'.'+methodName+'  (methodHash '+mh+(ch?(', classHash '+ch):'')+')');
+            return ob;
+        }
+        function cmUnobserve(){ obsByMethod={}; obsCount=0; log('observe: all cleared'); }
+        // ===== script-object creation + field access (for building the native menu) =====
+        // NO sig-scanned addresses (the JSON's CClass_CreateInstance hash is bogus on this binary - it points
+        // at a parser). Instead use the CClass vtable, which we already call successfully (nameOf uses vt+0x10).
+        // CClass vtable: SDK lists ConstructCls //D8, AllocMemory //E8, BUT the runtime vtable has a +0x08 shift
+        // (virtual dtor takes TWO Itanium slots; confirmed: nameOf reads GetName at vt+0x10 though SDK says //08).
+        // So runtime: ConstructCls @0xE0, AllocMemory @0xF0. CClass fields: parent@0x10, props@0x28, size@0x68.
+        // createInstance = AllocMemory() (allocs sizeof from the class allocator) + ConstructCls(mem).
+        function createInstance(className){ const cls=clsByName(className); if(!cls) return null;
+            try{ const vt=cls.readPointer();
+                const allocFn=new NativeFunction(vt.add(0xf0).readPointer(),'pointer',['pointer']);   // CClass::AllocMemory() (SDK 0xE8 +8)
+                const mem=allocFn(cls); if(!mem||mem.isNull()){ log('createInstance: AllocMemory null'); return null; }
+                const ctorFn=new NativeFunction(vt.add(0xe0).readPointer(),'void',['pointer','pointer']); // ConstructCls(mem) (SDK 0xD8 +8)
+                ctorFn(cls, mem); return mem;
+            }catch(e){ log('createInstance err '+e); return null; } }
+        // Resolve a field -> {off, type, typeName} via the manual props walk (inheritance via parent chain). No game func.
+        function findProp(className, fieldName){ let cls=clsByName(className); if(!cls) return null; const want=u64(fnv(fieldName)); let guard=0;
+            while(cls&&!cls.isNull()&&guard++<12){ const pp=cls.add(0x28).readPointer(), n=cls.add(0x30).readU32();
+                for(let i=0;i<n;i++){ const pr=pp.add(i*8).readPointer(); if(pr.isNull())continue;
+                    if(pr.add(0x08).readU64().equals(want)){ let tn='?'; try{tn=nameOf(pr.readPointer());}catch(e){} return {prop:pr, off:pr.add(0x20).readU32(), type:pr.readPointer(), typeName:tn}; } }
+                cls=cls.add(0x10).readPointer(); }
+            return null; }
+        // get an INSTANCE's class meta (instance vtable GetType @ +0x08), and resolve a method on a known meta.
+        function instType(inst){ try{ const vt=inst.readPointer(); return new NativeFunction(vt.add(8).readPointer(),'pointer',['pointer'])(inst); }catch(e){ return null; } }
+        function resolveFuncMeta(meta, method){ const mh=fnv(method); let cls=meta;
+            while(cls&&!cls.isNull()){ for(const off of [0x48,0x58]){ const fp=cls.add(off).readPointer(); const n=cls.add(off+8).readU32();
+                if(!fp.isNull()){ for(let i=0;i<n;i++){ const f=fp.add(i*8).readPointer(); if(f.isNull())continue;
+                    if(f.add(0x10).readU64().equals(u64(mh))){ const rp=f.add(0x18).readPointer(); return {fn:f, retType:rp.isNull()?ptr(0):rp.readPointer()}; } } } }
+                cls=cls.add(0x10).readPointer(); }
+            return null; }
         // enum member value by enum-type-name-hash + member name
         function resolveEnumByTypeHash(typeHashHex, member){ ensureReg(); const en=GetEnum(reg,uint64(typeHashHex)); if(en.isNull()) return null;
             const hp=en.add(0x28).readPointer(), n=en.add(0x30).readU32(), vp=en.add(0x38).readPointer(); const mh=fnv(member);
@@ -953,6 +1009,35 @@ rpc.exports = {
             if(t[0]==='archiveinject'){ try{ var ex=resolveExport('cybermodman_archiveInjectName'); if(!ex||ex.isNull()){ log('archiveinject: cybermodman_archiveInjectName export NOT FOUND'); return; } new NativeFunction(ex,'void',[])(); log('archiveinject: cybermodman_archiveInjectName() called - check ArchiveXL.log'); }catch(e){ log('archiveinject err '+e); } return; }   // wall-B exp: overwrite live onscreens text
             if(t[0]==='archivehookname'){ try{ var ex=resolveExport('cybermodman_archiveHookName'); if(!ex||ex.isNull()){ log('archivehookname: cybermodman_archiveHookName export NOT FOUND'); return; } new NativeFunction(ex,'void',[])(); log('archivehookname: cybermodman_archiveHookName() called - check ArchiveXL.log'); }catch(e){ log('archivehookname err '+e); } return; }   // wall-B exp: hook item display-name resolver
             if(t[0]==='archivename'){ try{ if(nameHookInstalled){ log('archivename: already installed'); return; } var naddr=base.add(0x378a4b8); var ncalls=0; Interceptor.attach(naddr,{ onEnter:function(a){ this.sret=this.context.x8; }, onLeave:function(r){ try{ var b=this.sret; if(!b||b.isNull()) return; var len=b.add(0x14).readU32(); var heap=(len&0x40000000)!==0; var alen=len&0x3FFFFFFF; var tp=heap?b.readPointer():b; var txt=''; try{ txt=tp.readUtf8String(alen); }catch(e){} if(ncalls<25){ ncalls++; log('namehook #'+ncalls+' x8='+b+' len='+alen+' heap='+heap+' text="'+txt+'"'); } if(txt && txt.indexOf('exington')>=0){ var s='CyberModMan!'; b.writeUtf8String(s); b.add(0x14).writeU32(s.length); b.add(0x18).writePointer(ptr(0)); log('namehook OVERWROTE "'+txt+'" -> '+s); } }catch(e){ log('namehook onLeave err '+e); } } }); nameHookInstalled=true; log('archivename: Frida interceptor attached at '+naddr+' (open inventory, hover a Lexington)'); }catch(e){ log('archivename err '+e); } return; }   // wall-B: DIRECT Frida interceptor on item name resolver (RED4ext plugin hooks dont fire)
+            if(t[0]==='observe'){   // live-register an Observe (works pre-game: settings/main-menu controllers fire here)
+                if(t[1]==='off'||t[1]==='clear'){ cmUnobserve(); return; }
+                if(t[1]==='list'){ let parts=[]; for(const k in obsByMethod){ for(let i=0;i<obsByMethod[k].length;i++){ const ob=obsByMethod[k][i]; parts.push(ob.className+'.'+ob.methodName+'('+ob.hits+')'); } } log('observe list ['+obsCount+']: '+(parts.join(', ')||'(none)')); return; }
+                if(t[1]&&t[2]){ cmObserve(t[1], t[2], null); return; }   // observe <Class> <Method>
+                if(t[1]){ cmObserve(null, t[1], null); return; }         // observe <Method>  (matches on any class)
+                log('usage: observe <Class> <Method> | observe <Method> | observe list | observe off'); return; }
+            if(t[0]==='mkobj'&&t[1]){ try{ const inst=createInstance(t[1]); if(!inst){ log('mkobj '+t[1]+' -> NULL (class unknown or alloc failed)'); return; }
+                let dump=''; try{ dump=hexp(inst,0x40); }catch(e){ dump='(read err)'; }
+                log('mkobj '+t[1]+' -> '+inst); log('   [0x40]='+dump); }catch(e){ log('mkobj err '+e); } return; }   // create a script object via AllocMemory+ConstructCls
+            if(t[0]==='field'&&t[1]&&t[2]){ try{ const f=findProp(t[1],t[2]); if(!f){ log('field '+t[1]+'.'+t[2]+' NOT FOUND'); return; } log('field '+t[1]+'.'+t[2]+' -> offset 0x'+f.off.toString(16)+'  type '+f.typeName); }catch(e){ log('field err '+e); } return; }   // resolve a field offset+type (read-only)
+            if(t[0]==='props'&&t[1]){ try{ let cls=clsByName(t[1]); if(!cls){ log('props: class '+t[1]+' UNKNOWN'); return; } let out=[], guard=0;
+                while(cls&&!cls.isNull()&&guard++<12){ const pp=cls.add(0x28).readPointer(), n=cls.add(0x30).readU32();
+                    for(let i=0;i<n&&out.length<60;i++){ const pr=pp.add(i*8).readPointer(); if(pr.isNull())continue; const nh='0x'+pr.add(0x08).readU64().toString(16); const off=pr.add(0x20).readU32(); let tn='?'; try{tn=nameOf(pr.readPointer());}catch(e){} out.push(nh+'@0x'+off.toString(16)+':'+tn); }
+                    cls=cls.add(0x10).readPointer(); }
+                log('props '+t[1]+' ['+out.length+']:'); for(let i=0;i<out.length;i+=3) log('   '+out.slice(i,i+3).join('   ')); }catch(e){ log('props err '+e); } return; }   // list class fields (read-only; names are hashes)
+            if(t[0]==='mkmods'){ try{ const inst=createInstance('PauseMenuListItemData'); if(!inst){ log('mkmods: create failed'); return; }
+                try{ inst.writeUtf8String('Mods'); inst.add(0x14).writeU32(4); inst.add(0x18).writePointer(ptr(0)); }catch(e){ log('  label err '+e); }   // label @0x00 String (inline)
+                try{ inst.add(0x20).writeU64(u64(fnv('OnSwitchToSettings'))); }catch(e){ log('  eventName err '+e); }                                  // eventName @0x20 CName
+                try{ let ev=resolveEnumByTypeHash('0x'+fnv('PauseMenuAction').toString(16),'OpenSubMenu'); if(ev===null){ log('  action: OpenSubMenu enum not resolved'); } else { inst.add(0x28).writeU32(ev.toNumber()>>>0); log('  action OpenSubMenu = '+ev); } }catch(e){ log('  action err '+e); }   // action @0x28 PauseMenuAction
+                let dump=''; try{ dump=hexp(inst,0x40); }catch(e){} log('mkmods -> '+inst+'  (label="Mods" eventName=OnSwitchToSettings)'); log('   [0x40]='+dump); }catch(e){ log('mkmods err '+e); } return; }   // build+fill a Mods menu-item (no PushData yet)
+            if(t[0]==='modsbutton'){ if(t[1]==='off'){ cmUnobserve(); log('modsbutton: cleared'); return; }
+                const sigOf=function(fn){ try{ const pe=fn.add(0x28).readPointer(),pc=fn.add(0x30).readU32();let p=[];for(let i=0;i<pc;i++){try{p.push(nameOf(pe.add(i*8).readPointer().readPointer()));}catch(e){p.push('?');}}return 'params['+pc+']=['+p.join(', ')+']'; }catch(e){ return 'sigErr'; } };
+                try{ const pdc=resolveFunc('inkListController','PushData'); log('modsbutton: inkListController.PushData = '+(pdc?(sigOf(pdc.fn)+' ret='+(pdc.retType.isNull()?'void':nameOf(pdc.retType))):'NOT FOUND')); }catch(e){ log('modsbutton: PushData resolve err '+e); }
+                let shown=0;
+                cmObserve('gameuiMenuItemListGameController','AddMenuItem', function(ctx){ try{ if(shown>=12) return;
+                    const mlc=ctx.add(0x38).readPointer(); let vt=ptr(0); try{ vt=mlc.readPointer(); }catch(e){}
+                    if(!vt.isNull()){ shown++; const mm=instType(mlc); const cm=instType(ctx); log('modsbutton: VALID mlc='+mlc+' class='+(mm?nameOf(mm):'?')+'  (ctx class '+(cm?nameOf(cm):'?')+')'); }
+                }catch(e){ log('modsbutton cb err '+e); } });
+                log('modsbutton: armed (read-only sig capture). Open a menu so AddMenuItem fires; "modsbutton off" clears.'); return; }   // capture PushData contract before we call it
             if(!player){ log('NOT IN GAME yet: '+line); return; }
             if(t[0]==='give'&&t[1]){ doGive(t[1], Math.max(1,parseInt(t[2]||'1')||1)); return; }
             if(t[0]==='money'&&t[1]){ doGive('Items.money', Math.max(1,parseInt(t[1])||1), true); return; }   // currency: always one bulk add
@@ -1010,6 +1095,11 @@ rpc.exports = {
                 try{ const fn=args[0],ctx=args[1]; if(fn.isNull()||ctx.isNull()) return;
                     if(!fromtd){ const nm='0x'+fn.add(0x08).readU64().toString(16); if(nm==='0x150155547ef75590'){ const rp=fn.add(0x18).readPointer(); fromtd={fn:fn,ctx:ctx,retType:rp.isNull()?ptr(0):rp.readPointer()}; } }
                     const vt=ctx.readPointer(); if(vt.isNull()) return;
+                    // Observe dispatch (zero cost when no observers registered). Must run BEFORE the
+                    // player/seenVt early-returns below, or observers would fire at most once per vtable.
+                    if(obsCount){ const omh='0x'+fn.add(0x10).readU64().toString(16); const olist=obsByMethod[omh];
+                        if(olist){ let cmeta=null; try{ cmeta=new NativeFunction(vt.add(8).readPointer(),'pointer',['pointer'])(ctx); }catch(e){}
+                            for(let oi=0;oi<olist.length;oi++){ const ob=olist[oi]; if(ob.classHash && (cmeta===null || !classIsA(cmeta, ob.classHash))) continue; obsFire(ob, ctx, args[2], fn); } } }
                     if(playerVt && vt.equals(playerVt)){ player=ctx; addCand(ctx); return; }
                     const vk=vt.toString(); if(seenVt.has(vk)) return; seenVt.add(vk);
                     const fn0=vt.readPointer(); if(fn0.isNull()) return;

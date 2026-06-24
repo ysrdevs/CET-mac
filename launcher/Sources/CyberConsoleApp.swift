@@ -2,12 +2,19 @@ import SwiftUI
 import AppKit
 
 enum Const {
-    static let appVersion = "1.3.2"
+    static let appVersion = "1.4.0"
     static let supportedGameVersion = "2.3.1"
     static let defaultGame = "\(NSHomeDirectory())/Library/Application Support/Steam/steamapps/common/Cyberpunk 2077"
     // Files copied from the app's Resources into <game>/red4ext/ on install.
     static let payload = ["red4ext_hooks.js", "FridaGadget.config", "RED4ext.dylib",
                           "FridaGadget.dylib", "libcyberconsole_overlay.dylib", "cet_catalog.tsv"]
+    // CyberModMan creator payload: (bundled Resource name, destination relative to gamePath).
+    // TweakXL is a RED4ext plugin (loaded from plugins/, not DYLD-injected); the names file is
+    // user data once they start creating, so it is seeded only when absent (never overwritten).
+    static let cmnPayload: [(res: String, dest: String, seedOnly: Bool)] = [
+        ("TweakXL.dylib",           "red4ext/plugins/TweakXL/TweakXL.dylib", false),
+        ("cybermodman_names.json",  "red4ext/cybermodman_names.json",        true),
+    ]
     static let repo = "ysrdevs/nightcity-console-mac"
     static let commandsURL = "https://github.com/ysrdevs/nightcity-console-mac/blob/main/docs/COMMANDS.md"
     static let supportURL = "https://ko-fi.com/ysrdevs"
@@ -53,7 +60,9 @@ final class Model: ObservableObject {
     var injectDylibs: [String] { ["RED4ext.dylib", "FridaGadget.dylib", "libcyberconsole_overlay.dylib"] }
     func fullyInstalled() -> Bool {
         let fm = FileManager.default
-        return Const.payload.allSatisfy { fm.fileExists(atPath: "\(red4Dir)/\($0)") }
+        let core = Const.payload.allSatisfy { fm.fileExists(atPath: "\(red4Dir)/\($0)") }
+        let tweakXL = fm.fileExists(atPath: "\(gamePath)/red4ext/plugins/TweakXL/TweakXL.dylib")
+        return core && tweakXL
     }
 
     func setGamePath(_ p: String) {
@@ -134,7 +143,18 @@ final class Model: ObservableObject {
                 if fm.fileExists(atPath: dst.path) { try fm.removeItem(at: dst) }
                 try fm.copyItem(at: src, to: dst)
             }
-            stripQuarantine(red4Dir)   // files we just wrote -> make dyld load them
+            // CyberModMan creator payload (TweakXL plugin into plugins/, seed names file)
+            for item in Const.cmnPayload {
+                let src = res.appendingPathComponent(item.res)
+                guard fm.fileExists(atPath: src.path) else { status = "Missing bundled file: \(item.res)"; return }
+                let dstPath = "\(gamePath)/\(item.dest)"
+                let dst = URL(fileURLWithPath: dstPath)
+                try fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
+                if item.seedOnly && fm.fileExists(atPath: dstPath) { continue }   // don't clobber user creations
+                if fm.fileExists(atPath: dstPath) { try fm.removeItem(at: dst) }
+                try fm.copyItem(at: src, to: dst)
+            }
+            stripQuarantine(red4Dir)   // files we just wrote (incl. plugins/TweakXL) -> make dyld load them
             guard ensureGameEntitlements() else { return }   // status set on failure
             status = "Installed - click Play."
             refresh()

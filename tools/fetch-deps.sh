@@ -17,10 +17,11 @@ if [ -d "$GAME" ]; then
   echo "Found local install - copying from: $GAME"
   copy_if "$GAME/RED4ext.dylib"
   copy_if "$GAME/FridaGadget.dylib"
+  copy_if "$GAME/plugins/TweakXL/TweakXL.dylib"   # CyberModMan creator weapon engine (RED4ext plugin)
 fi
 
 MISSING=0
-for f in RED4ext.dylib FridaGadget.dylib; do
+for f in RED4ext.dylib FridaGadget.dylib TweakXL.dylib; do
   [ -f "deps/$f" ] || { echo "  MISSING: deps/$f"; MISSING=1; }
 done
 

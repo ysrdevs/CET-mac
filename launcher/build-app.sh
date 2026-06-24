@@ -24,6 +24,8 @@ echo "==> bundling payload into Resources"
 cp runtime/red4ext_hooks.js runtime/FridaGadget.config runtime/cet_catalog.tsv "$APP/Contents/Resources/"
 cp deps/RED4ext.dylib deps/FridaGadget.dylib            "$APP/Contents/Resources/"
 cp build/libcyberconsole_overlay.dylib                  "$APP/Contents/Resources/"
+# CyberModMan creator payload (TweakXL plugin from deps/ + seed names file; launcher deploys these on install)
+cp deps/TweakXL.dylib runtime/cybermodman/cybermodman_names.json "$APP/Contents/Resources/"
 
 if [ -f assets/icon.png ]; then
   echo "==> generating app icon (AppIcon.icns from assets/icon.png)"

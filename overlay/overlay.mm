@@ -19,6 +19,10 @@
 #include <deque>
 #include <mutex>
 #include <atomic>
+#include <thread>
+#include <unistd.h>
+#include <set>
+#include <vector>
 #include <unordered_map>
 #include <dispatch/dispatch.h>
 #include <dlfcn.h>
@@ -492,6 +496,228 @@ static void drawQuickTab() {
     ImGui::SameLine(); if (ImGui::Button("Go to spot")) runLabeled(std::string("teleport ") + tpname, std::string("Teleported: ") + tpname);
 }
 
+// ---- Creator: build a custom iconic weapon IN-PROCESS (ported from makeweapon.py). No Python, no
+//      external scripts, no hardcoded paths: generates the TweakXL YAML + appends the name/flavor/gold
+//      LocKey strings, then applies live via cmnreload/tweakload/give. Game dir discovered at runtime. ----
+#define CR_SLOT_RANGED "AttachmentSlots.IconicWeaponModLegendary"
+#define CR_SLOT_MELEE  "AttachmentSlots.IconicMeleeWeaponMod1"
+#define CR_BP_R   "Items.Iconic_Ranged_Weapon_Blueprint"
+#define CR_BP_RN  "Items.Iconic_Ranged_Weapon_NoMuzzle_Blueprint"
+#define CR_BP_RA  "Items.Iconic_Ranged_Weapon_NoAttachments_Blueprint"
+#define CR_BP_M   "Items.Iconic_Melee_Blueprint"
+static const long CR_LOCKEY_START = 7777798;
+
+struct CrBase { const char* label; const char* preset; const char* bp; const char* slot; bool melee; };
+static const CrBase kCrBases[] = {
+    {"Pistol  -  Lexington", "Items.Preset_Lexington_Default",    CR_BP_R,  CR_SLOT_RANGED, false},
+    {"SMG  -  Saratoga",     "Items.Preset_Saratoga_Default",     CR_BP_R,  CR_SLOT_RANGED, false},
+    {"Shotgun  -  Carnage",  "Items.Preset_Carnage_Default",      CR_BP_RA, CR_SLOT_RANGED, false},
+    {"Sniper  -  Nekomata",  "Items.Preset_Nekomata_Default",     CR_BP_RN, CR_SLOT_RANGED, false},
+    {"Katana",               "Items.Preset_Katana_Default",       CR_BP_M,  CR_SLOT_MELEE,  true},
+    {"Knife",                "Items.Preset_Knife_Default",        CR_BP_M,  CR_SLOT_MELEE,  true},
+    {"Baseball Bat",         "Items.Preset_Baseball_Bat_Default", CR_BP_M,  CR_SLOT_MELEE,  true},
+};
+static const int kCrNumBases = (int)(sizeof(kCrBases) / sizeof(kCrBases[0]));
+
+struct CrStat { const char* stat; const char* mod; const char* val; };
+struct CrEff  { const char* name; CrStat stats[2]; int nstats; bool meleeOnly; };
+static const CrEff kCrEffects[] = {
+    {"fire",        {{"BurningApplicationRate","Additive","100"}}, 1, false},
+    {"bleed",       {{"BleedingApplicationRate","Additive","75"}}, 1, false},
+    {"shock",       {{"ElectrocutedApplicationRate","Additive","75"}}, 1, false},
+    {"poison",      {{"PoisonedApplicationRate","Additive","75"}}, 1, false},
+    {"stun",        {{"StunApplicationRate","Additive","75"}}, 1, false},
+    {"crit",        {{"CritChance","Additive","40"},{"CritDamage","Additive","150"}}, 2, false},
+    {"headshot",    {{"HeadshotDamageMultiplier","Additive","3.0"}}, 1, false},
+    {"ignorearmor", {{"CanWeaponIgnoreArmor","Additive","1"}}, 1, false},
+    {"armorpen",    {{"ArmorPenetrationBonus","Additive","100"}}, 1, false},
+    {"lifesteal",   {{"HealthRegainOnKill","Additive","30"}}, 1, false},
+    {"execute",     {{"BonusPercentDamageToEnemiesBelowHalfHealth","Additive","50"}}, 1, false},
+    {"damage",      {{"DamagePerHit","Multiplier","1.5"}}, 1, false},
+    {"bigmag",      {{"MagazineCapacityBonus","Additive","40"}}, 1, false},
+    {"fastreload",  {{"ReloadSpeedPercentBonus","Additive","50"}}, 1, false},
+    {"stealth",     {{"StealthHitDamageBonus","Additive","100"}}, 1, false},
+    {"melee",       {{"MeleeDamagePercentBonus","Additive","60"}}, 1, false},
+    {"antiboss",    {{"BonusDamageAgainstBosses","Additive","100"}}, 1, false},
+    {"leap",        {{"CanMeleeLeap","Additive","1"}}, 1, true},
+};
+static const int kCrNumEffects = (int)(sizeof(kCrEffects) / sizeof(kCrEffects[0]));
+
+static int   g_crBase = 0;
+static char  g_crName[64]   = "Crit Machine";
+static char  g_crWhite[256] = "Built in a back-alley ripperdoc's. One of a kind.";
+static char  g_crGold[256]  = "Custom iconic ability.";
+static bool  g_crEff[32] = { false };
+static std::mutex g_crMtx;
+static std::string g_crStatus;
+static std::atomic<bool> g_crBusy{false};
+
+// Game dir = the folder two levels up from this dylib (<GAME>/red4ext/libcyberconsole_overlay.dylib).
+static std::string crGameRoot() {
+    Dl_info info;
+    if (dladdr((void*)&crGameRoot, &info) && info.dli_fname) {
+        std::string p = info.dli_fname;
+        size_t a = p.find_last_of('/'); if (a != std::string::npos) p.resize(a);   // -> <GAME>/red4ext
+        size_t b = p.find_last_of('/'); if (b != std::string::npos) p.resize(b);   // -> <GAME>
+        return p;
+    }
+    return "";
+}
+static std::string crJsonEsc(const std::string& s) {
+    std::string o; for (unsigned char c : s) { switch (c) {
+        case '"': o += "\\\""; break; case '\\': o += "\\\\"; break;
+        case '\n': o += "\\n"; break; case '\r': o += "\\r"; break; case '\t': o += "\\t"; break;
+        default: if (c < 0x20) { char b[8]; snprintf(b, sizeof(b), "\\u%04x", c); o += b; } else o += (char)c; }
+    } return o;
+}
+// Mirror Python str.title() + strip non-alnum, then prefix CyberModMan.
+static std::string crRecordStem(const std::string& name) {
+    std::string out; bool wordStart = true;
+    for (char c : name) {
+        if (isalnum((unsigned char)c)) {
+            if (isalpha((unsigned char)c)) { out += (char)(wordStart ? toupper(c) : tolower(c)); wordStart = false; }
+            else { out += c; wordStart = true; }
+        } else wordStart = true;
+    }
+    return "CyberModMan" + (out.empty() ? std::string("Weapon") : out);
+}
+static std::string crStatYaml(const char* st, const char* mt, const char* v) {
+    return std::string("    - $type: ConstantStatModifier\n      statType: BaseStats.") + st +
+           "\n      modifierType: " + mt + "\n      value: " + v + "\n";
+}
+static std::string crReadFile(const std::string& path) {
+    std::string c; FILE* f = fopen(path.c_str(), "r"); if (!f) return c;
+    char b[4096]; size_t n; while ((n = fread(b,1,sizeof(b),f)) > 0) c.append(b,n); fclose(f); return c;
+}
+static std::set<long> crUsedLockeys(const std::string& path) {
+    std::set<long> used; std::string c = crReadFile(path);
+    for (size_t i = 0; i < c.size(); ) {
+        if (c[i] == '"') { size_t j = i+1; std::string num; bool digits = true;
+            while (j < c.size() && c[j] != '"') { if (!isdigit((unsigned char)c[j])) digits = false; num += c[j]; j++; }
+            if (digits && !num.empty() && j < c.size()) { size_t k = j+1;
+                while (k < c.size() && isspace((unsigned char)c[k])) k++;
+                if (k < c.size() && c[k] == ':') used.insert(strtol(num.c_str(), nullptr, 10)); }
+            i = j + 1;
+        } else i++;
+    }
+    return used;
+}
+static bool crAppendNames(const std::string& path, long k1, const std::string& v1,
+                          long k2, const std::string& v2, long k3, const std::string& v3) {
+    std::string c = crReadFile(path);
+    while (!c.empty() && isspace((unsigned char)c.back())) c.pop_back();
+    std::string entries =
+        "  \"" + std::to_string(k1) + "\": \"" + crJsonEsc(v1) + "\",\n"
+        "  \"" + std::to_string(k2) + "\": \"" + crJsonEsc(v2) + "\",\n"
+        "  \"" + std::to_string(k3) + "\": \"" + crJsonEsc(v3) + "\"\n";
+    std::string out;
+    if (c.empty() || c == "{}" || c == "{") out = "{\n" + entries + "}\n";
+    else if (c.back() == '}') {
+        c.pop_back(); while (!c.empty() && isspace((unsigned char)c.back())) c.pop_back();
+        std::string sep = (!c.empty() && c.back() == '{') ? "\n" : ",\n";
+        out = c + sep + entries + "}\n";
+    } else out = "{\n" + entries + "}\n";
+    FILE* w = fopen(path.c_str(), "w"); if (!w) return false;
+    fwrite(out.data(), 1, out.size(), w); fclose(w); return true;
+}
+// Generate + deploy. Returns the record id, or "" with err set.
+static std::string crGenWeapon(int baseIdx, const std::string& name, const std::string& white,
+                               const std::string& gold, const bool* effSel, std::string& err) {
+    std::string game = crGameRoot();
+    if (game.empty()) { err = "could not locate game dir"; return ""; }
+    std::string tweaks = game + "/r6/tweaks";
+    std::string namesPath = game + "/red4ext/cybermodman_names.json";
+    const CrBase& bse = kCrBases[baseIdx];
+    std::string stem = crRecordStem(name);
+    std::string recordId = "Items." + stem;
+
+    std::string body; bool hasDamage = false;
+    for (int i = 0; i < kCrNumEffects; ++i) {
+        if (!effSel[i]) continue;
+        const CrEff& e = kCrEffects[i];
+        if (e.meleeOnly && !bse.melee) continue;
+        for (int s = 0; s < e.nstats; ++s) {
+            body += crStatYaml(e.stats[s].stat, e.stats[s].mod, e.stats[s].val);
+            if (std::string(e.stats[s].stat) == "DamagePerHit") hasDamage = true;
+        }
+    }
+    std::string stats = (hasDamage ? std::string() : crStatYaml("DamagePerHit","Multiplier","1.5")) + body;
+
+    std::set<long> used = crUsedLockeys(namesPath);
+    long keys[3]; int got = 0; for (long k = CR_LOCKEY_START; got < 3; ++k) if (!used.count(k)) keys[got++] = k;
+    std::string kn = std::to_string(keys[0]), kw = std::to_string(keys[1]), kg = std::to_string(keys[2]);
+
+    std::string yaml =
+        "# cybermodman generated iconic: " + name + "\n" +
+        "Items." + stem + "_AbilityUI:\n  $type: GameplayLogicPackageUIData\n  localizedDescription: LocKey#" + kg + "\n\n" +
+        "Items." + stem + "_Ability:\n  $base: Items.IconicWeaponModAbilityBase\n  UIData: Items." + stem + "_AbilityUI\n\n" +
+        "Items." + stem + "_Mod:\n  $base: Items.IconicWeaponModBase\n  OnAttach:\n    - Items." + stem + "_Ability\n  statModifiers:\n" +
+        stats +
+        "Items." + stem + ":\n  $base: " + bse.preset + "\n  blueprint: " + bse.bp + "\n  quality: Quality.Legendary\n" +
+        "  displayName: LocKey#" + kn + "\n  gameplayDescription: LocKey#" + kw + "\n" +
+        "  tags:\n    - !append IconicWeapon\n  statModifiers:\n    - !append Quality.IconicItem\n" +
+        "  statModifierGroups:\n    - !remove Items.QualityRandomization\n    - !append Items.IconicQualityRandomization\n" +
+        "  slotPartListPreset:\n    - !append-once\n      $type: SlotItemPartPreset\n      itemPartPreset: Items." + stem + "_Mod\n      slot: " + bse.slot + "\n";
+
+    std::string yamlPath = tweaks + "/cybermodman_" + stem + ".yaml";
+    FILE* yf = fopen(yamlPath.c_str(), "w");
+    if (!yf) { err = "cannot write " + yamlPath; return ""; }
+    fwrite(yaml.data(), 1, yaml.size(), yf); fclose(yf);
+    if (!crAppendNames(namesPath, keys[0], name, keys[1], white, keys[2], gold)) { err = "cannot write names json"; return ""; }
+    return recordId;
+}
+
+static void crSetStatus(const std::string& s) { std::lock_guard<std::mutex> lk(g_crMtx); g_crStatus = s; }
+
+static void crCreateThread(int baseIdx, std::string name, std::string white, std::string gold, std::vector<char> sel) {
+    g_crBusy = true;
+    crSetStatus("Generating \"" + name + "\" ...");
+    bool eff[64] = { false }; for (size_t i = 0; i < sel.size() && i < 64; ++i) eff[i] = sel[i] != 0;
+    std::string err;
+    std::string recordId = crGenWeapon(baseIdx, name, white, gold, eff, err);
+    if (recordId.empty()) { crSetStatus("FAILED: " + err); g_crBusy = false; return; }
+    crSetStatus("Created " + recordId + " - applying in-game ...");
+    runCommand("cmnreload");               usleep(350000);   // load the new name/flavor/gold LocKeys
+    runCommand("tweakload");               usleep(750000);   // apply the new weapon record to TweakDB
+    runCommand("give " + recordId + " 1"); usleep(150000);   // hand it to the player
+    crSetStatus("DONE: \"" + name + "\" (" + recordId + ") created + applied + added to inventory.\n"
+                "Note: the GOLD ability text fully links after one game restart (name, white text + the weapon work now).");
+    g_crBusy = false;
+}
+
+static void drawCreatorTab() {
+    ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "CYBERMODMAN  -  Custom Iconic Weapon Creator");
+    ImGui::TextDisabled("Pick a base, name it, choose effects, hit Create. (Load a save first so it can be given.)");
+    ImGui::Separator();
+    ImGui::SetNextItemWidth(300);
+    if (ImGui::BeginCombo("Base", kCrBases[g_crBase].label)) {
+        for (int i = 0; i < kCrNumBases; ++i) { bool sel = (i == g_crBase);
+            if (ImGui::Selectable(kCrBases[i].label, sel)) g_crBase = i;
+            if (sel) ImGui::SetItemDefaultFocus(); }
+        ImGui::EndCombo();
+    }
+    ImGui::SetNextItemWidth(300); ImGui::InputText("Name", g_crName, sizeof(g_crName));
+    ImGui::SetNextItemWidth(520); ImGui::InputText("White flavor", g_crWhite, sizeof(g_crWhite));
+    ImGui::SetNextItemWidth(520); ImGui::InputText("Gold ability text", g_crGold, sizeof(g_crGold));
+    ImGui::Separator();
+    ImGui::TextDisabled("Effects (leap = melee only):");
+    for (int i = 0; i < kCrNumEffects; ++i) {
+        ImGui::Checkbox(kCrEffects[i].name, &g_crEff[i]);
+        if ((i % 6) != 5 && i != kCrNumEffects - 1) ImGui::SameLine();
+    }
+    ImGui::Separator();
+    bool busy = g_crBusy.load();
+    if (busy) ImGui::BeginDisabled();
+    if (ImGui::Button("Create & Apply", ImVec2(190, 34))) {
+        std::vector<char> sel(kCrNumEffects); for (int i = 0; i < kCrNumEffects; ++i) sel[i] = g_crEff[i] ? 1 : 0;
+        std::thread(crCreateThread, g_crBase, std::string(g_crName),
+                    std::string(g_crWhite), std::string(g_crGold), sel).detach();
+    }
+    if (busy) { ImGui::EndDisabled(); ImGui::SameLine(); ImGui::TextDisabled("working..."); }
+    { std::lock_guard<std::mutex> lk(g_crMtx);
+      if (!g_crStatus.empty()) { ImGui::Separator(); ImGui::TextWrapped("%s", g_crStatus.c_str()); } }
+}
+
 static void drawConsole() {
     ImGui::SetNextWindowSize(ImVec2(860, 480), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(48, 48), ImGuiCond_FirstUseEver);
@@ -522,6 +748,7 @@ static void drawConsole() {
         }
         if (ImGui::BeginTabItem("Items", nullptr, req == 1 ? ImGuiTabItemFlags_SetSelected : 0)) { drawItemsTab(); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Quick", nullptr, req == 2 ? ImGuiTabItemFlags_SetSelected : 0)) { drawQuickTab(); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Creator", nullptr, req == 3 ? ImGuiTabItemFlags_SetSelected : 0)) { drawCreatorTab(); ImGui::EndTabItem(); }
         ImGui::EndTabBar();
     }
     if (!g_lastAction.empty()) {
