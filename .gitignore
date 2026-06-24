@@ -25,3 +25,9 @@ saves/
 fixtures/
 *.log
 *.bak.*
+
+# internal planning docs (kept local, not published)
+docs/BUILD-QUEUE.md
+docs/EXECUTE-AND-SHIP-PLAN.md
+docs/MACOS-MODDING-PLATFORM-PLAN.md
+docs/SESSION-CHECKPOINT.md

@@ -1052,7 +1052,7 @@ rpc.exports = {
             if(t[0]==='nopolice'||t[0]==='police'){ doNoPolice(t[1]!=='off'); return; }
             if((t[0]==='removeitem'||t[0]==='remove')&&t[1]){ doRemove(t[1], Math.max(1,parseInt(t[2]||'1')||1)); return; }
             if(t[0]==='heal'){ doHeal(); return; }
-            if((t[0]==='setfact'||t[0]==='addfact')&&t[1]){ doSetFact(t[1], parseInt(t[2]||'1')||1); return; }
+            if((t[0]==='setfact'||t[0]==='addfact')&&t[1]){ var fv=(t[2]===undefined?1:parseInt(t[2],10)); if(isNaN(fv))fv=0; doSetFact(t[1], fv); return; }
             if(t[0]==='summon'||t[0]==='car'){ doSummon(); return; }
             if(t[0]==='level'&&t[1]){ doLevel(Math.max(1,parseInt(t[1])||1)); return; }
             if((t[0]==='streetcred'||t[0]==='sc')&&t[1]){ doStreetCred(Math.max(1,Math.min(50,parseInt(t[1])||1))); return; }
