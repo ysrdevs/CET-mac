@@ -5,22 +5,9 @@
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Status](https://img.shields.io/badge/status-Steam%20supported-green)
 
-A native Apple Silicon in-game console and item browser for Cyberpunk 2077 on macOS.
+A native Apple Silicon in-game console, cheat menu, and item browser for Cyberpunk 2077 on macOS. Think Cyber Engine Tweaks, rebuilt from scratch for the native macOS/Apple Silicon build of the game: inject into the running process, resolve REDengine's runtime type system, call game functions with real typed arguments, and draw a console on the live frame with a Metal overlay you drive from the keyboard.
 
-Think Cyber Engine Tweaks, but rebuilt for native macOS/Apple Silicon. NightCity Console brings CET-style commands
-to the native macOS version of Cyberpunk 2077, with an in-game Metal overlay you drive from the keyboard:
-search and spawn from a built-in browser of 7,552 items, pin your favorites, fire one-click cheats
-(money, heal, godmode, invisibility, perks/attributes/relic, level), teleport with bookmarks,
-run CET-style commands, and debug REDengine calls.
-
-> Renamed from CET Mac to NightCity Console for Mac to avoid confusion with Cyber Engine Tweaks. This is an
-> independent macOS-native project and is not affiliated with CET, WolvenKit, REDmod, CD PROJEKT RED, or
-> Cyberpunk 2077.
-
-Single-player, personal use, on your own legally-owned copy. Not affiliated with Cyber Engine Tweaks or
-CD PROJEKT RED. Back up your saves before using it.
-
-Platform: macOS arm64. Built against Cyberpunk 2077 v2.3.1 (Steam). GOG support is in progress.
+> Renamed from "CET Mac" to "NightCity Console for Mac" to avoid confusion with Cyber Engine Tweaks. This is an independent, macOS-native project and is not affiliated with CET, WolvenKit, REDmod, CD PROJEKT RED, or Cyberpunk 2077. Single-player, personal use, on your own legally-owned copy. Back up your saves before using it.
 
 ![NightCity Console launcher](assets/screenshot.png)
 
@@ -41,7 +28,33 @@ Platform: macOS arm64. Built against Cyberpunk 2077 v2.3.1 (Steam). GOG support 
   </tr>
 </table>
 
-## For players
+## Status
+
+macOS arm64 (Apple Silicon, M1/M2/M3/M4). Built and verified against Cyberpunk 2077 v2.3.1 (Steam). GOG support is in progress. The offsets and hashes are derived from the Steam macOS build, so other distributions are not supported yet.
+
+## What it does
+
+- In-game ImGui console drawn on the live frame (Metal), keyboard-driven, with tabbed views (Cmd+1/2/3), command history, and clipboard support (Cmd+V/C/X/A).
+- Searchable item browser backed by a bundled catalog of 7,552 items. Browse by category (Weapons, Cyberware, Clothes, Crafting, Mods, Misc) or type to filter, press Enter to spawn the top match, no hunting for ids.
+- Pinned favorites that persist across restarts, surfaced in a Quick tab so your go-to gear is one keypress away.
+- One-click cheats: money, full heal, perks, attributes, relic points, set character level.
+- Godmode that registers with the engine godmode system and auto-reapplies across scene and vehicle transitions.
+- Invisibility (line-of-sight and detection break), infinite ammo, and world toggles (time of day, slow motion, disable police response).
+- Teleport with saved position bookmarks (save a spot, return to it later).
+- A generic `call <Class> <Method>` bridge that can invoke any observed RTTI method, plus quest-fact editing.
+- Action confirmations: every command reports exactly what it did at the bottom of the overlay.
+- Native Mods tab that lists, enables, and disables loose `.archive` mods by renaming `.archive` to `.archive.off`.
+
+See [docs/COMMANDS.md](docs/COMMANDS.md) for the full command list and known limits.
+
+## Requirements
+
+- Apple Silicon Mac (arm64). Intel is not supported.
+- macOS 12 (Monterey) or newer.
+- Cyberpunk 2077 v2.3.1, macOS, Steam build.
+- A legally-owned copy of the game. No CD PROJEKT RED files are distributed by this project.
+
+## Install and usage (players)
 
 Prefer a walkthrough? Watch the install and usage video:
 
@@ -52,29 +65,21 @@ Prefer a walkthrough? Watch the install and usage video:
 3. Open NightCity Console, click Install, then Play.
 4. In-game, press the backtick/tilde key (`` ` ``) or F1 to open the console.
 
-No Terminal, no file editing. The app finds your game, installs the files (re-signing it so the console can
-load), and launches it. Steam Cloud saves keep working.
+No Terminal, no file editing. The app finds your game, installs the runtime files (re-signing the game binary so the console can load), and launches it. Steam Cloud saves keep working.
 
-Updating from an older version? After replacing the app, click Install once (it reads "Reinstall NightCity Console"),
-then Play. No need to uninstall first.
+Updating from an older version: after replacing the app, click Install once (it reads "Reinstall NightCity Console"), then Play. No need to uninstall first.
 
 ### Using the console in-game
 
-The game captures the mouse during play, so the overlay is keyboard-driven. Switch tabs with **Cmd+1 /
-Cmd+2 / Cmd+3**:
+The game captures the mouse during play, so the overlay is keyboard-driven. Switch tabs with Cmd+1 / Cmd+2 / Cmd+3:
 
-- **Console** (Cmd+1) - type commands directly. Up/Down for history, Cmd+V to paste, `help` for the list.
-- **Items** (Cmd+2) - browse by category (Weapons, Cyberware, Clothes, Crafting, Mods, Misc; **Cmd+G**
-  cycles) or type to search 7,552 items. **Enter** spawns the top match, **Cmd+P** pins it to favorites.
-  Set the quantity first if you want a stack.
-- **Quick** (Cmd+3) - one-click cheats (money, heal, godmode, invisibility, perks/attributes/relic,
-  level), your pinned favorites, and teleport bookmarks.
-
-Every action shows a confirmation at the bottom so you can see exactly what was added.
+- Console (Cmd+1): type commands directly. Up/Down for history, Cmd+V to paste, `help` for the list.
+- Items (Cmd+2): browse by category (Cmd+G cycles categories) or type to search the 7,552-item catalog. Enter spawns the top match, Cmd+P pins it to favorites. Set the quantity first if you want a stack.
+- Quick (Cmd+3): one-click cheats, your pinned favorites, and teleport bookmarks.
 
 Common commands (full list in [docs/COMMANDS.md](docs/COMMANDS.md), or `help` in-game):
 
-```
+```text
 give Items.Preset_Silverhand_3516 1       # Johnny's Malorian
 money 50000
 perks 10
@@ -84,46 +89,7 @@ teleport save home    then    teleport home
 Game.AddToInventory("Items.MaxDOSE", 5)    # CET-style line, also works
 ```
 
-## What works
-
-- **In-game ImGui console** drawn on the live frame (Metal), keyboard-driven with tabs (Cmd+1/2/3),
-  command history, and clipboard (Cmd+V).
-- **Searchable item browser** - a bundled catalog of 7,552 items. Browse by category or type to filter,
-  Enter to spawn the top match, no hunting for ids. Add/remove any item by `Items.*` id, any quantity,
-  including CET `Game.AddToInventory` syntax.
-- **Pinned favorites** - pin items (Cmd+P) and they persist across restarts in a Quick tab, so your go-to
-  gear is one keypress away.
-- **One-click cheats** - money, full heal, perks, attributes, relic points, set character level.
-- **Godmode** - true no-damage invulnerability, including fall damage. Auto-reapplies so it survives
-  scene and vehicle transitions.
-- **Invisibility** - cameras and enemies can't see you (line-of-sight and detection break).
-- **Infinite ammo** - fire without consuming ammo.
-- **World toggles** - set time of day, slow motion, and disable the police response.
-- **Teleport** with saved position bookmarks (save a spot, return to it later).
-- **Action confirmations** - every command reports what it just did.
-- Quest facts, and a generic `call <Class> <Method>` bridge that can invoke any observed RTTI method.
-
-See [docs/COMMANDS.md](docs/COMMANDS.md) for the full list and known limits.
-
-## How it works (short version)
-
-NightCity Console injects into the arm64 game process with `DYLD_INSERT_LIBRARIES` (no SIP changes), resolves
-REDengine's RTTI, and drives the script VM to call game functions with typed arguments. The console UI is
-Dear ImGui drawn from a `presentDrawable:` hook; input comes from an `NSApplication.sendEvent:` hook.
-Commands travel over a small file channel to the injected script engine.
-
-On Install, the launcher re-signs the game binary ad-hoc with the `allow-jit` /
-`allow-unsigned-executable-memory` entitlements. The stock Steam signature omits these, and without them
-macOS kills the game the moment the injected JIT engine generates code. This changes nothing permanent:
-Steam's "Verify Integrity of Game Files" restores the original signature at any time.
-
-For the full write-up of the reverse engineering and architecture, see [TECHNICAL.md](TECHNICAL.md).
-
-- `runtime/red4ext_hooks.js` - the command engine (RTTI calls, all commands).
-- `overlay/overlay.mm` - the Metal/ImGui overlay and input.
-- `launcher/` - the macOS app that installs and launches the game.
-
-## For developers (from source)
+## Build (from source)
 
 ```bash
 git clone <this repo> && cd nightcity-console-mac
@@ -131,30 +97,62 @@ git clone <this repo> && cd nightcity-console-mac
 ./dev/launch.sh              # builds the overlay, stages the payload into your game, and launches it
 ```
 
-`dev/launch.sh` honors `CP2077_DIR` if your game isn't at the default Steam path. The third-party runtime
-binaries are not committed (see `.gitignore`); they're fetched into `deps/` and bundled into the release
-`.dmg`. Building the signed, notarized app: see `tools/sign-notarize.sh` (needs an Apple Developer ID);
-it produces both a `.dmg` and a `.zip` in `dist/`.
+`dev/launch.sh` honors `CP2077_DIR` if your game is not at the default Steam path. The third-party runtime binaries (`RED4ext.dylib`, `FridaGadget.dylib`) are not committed (see `.gitignore`); they are fetched into `deps/` and bundled into the release `.dmg`.
+
+To build the signed, notarized app for distribution, run `tools/sign-notarize.sh` (needs an Apple Developer ID). It re-signs everything inside-out with a hardened runtime, notarizes the `.app` and the `.dmg` with `notarytool`, staples the tickets, and produces both a `.dmg` and a `.zip` in `dist/`.
+
+Key source files:
+
+- `runtime/red4ext_hooks.js`: the command engine (RTTI resolution, function calls, all commands).
+- `overlay/overlay.mm`: the Metal/ImGui overlay and input handling.
+- `launcher/`: the SwiftUI macOS app that installs and launches the game.
+
+## How it works (short version)
+
+NightCity Console injects three dylibs into the arm64 game process with `DYLD_INSERT_LIBRARIES` (no SIP changes): the macOS RED4ext hooking framework, the Frida gadget (an in-process script host), and a native Metal/ImGui overlay. It resolves REDengine's RTTI registry, then drives the script VM (the universal script executor) to call game functions with typed arguments built into a synthetic script stack frame. The console UI is Dear ImGui drawn from a `presentDrawable:` swizzle; input comes from an `NSApplication.sendEvent:` swizzle. The command engine and the overlay are decoupled and communicate over a small file channel in `/tmp`.
+
+On Install, the launcher re-signs the game binary ad-hoc with the `allow-jit` and `allow-unsigned-executable-memory` entitlements. The stock Steam signature omits these, and without them macOS kills the game the moment the injected JIT engine generates code. Nothing is permanent: Steam's "Verify Integrity of Game Files" restores the original signature at any time.
+
+For the full reverse-engineering and architecture write-up (offsets, struct layouts, calling convention, the bugs found and how they were fixed), see [TECHNICAL.md](TECHNICAL.md). For the complete macOS modding platform (RED4ext, RED4ext.SDK, TweakXL, ArchiveXL, and the console runtime), see [docs/MACOS-MODDING-PLATFORM.md](docs/MACOS-MODDING-PLATFORM.md).
 
 ## Compatibility and caveats
 
-- **Steam version only** right now. The offsets are derived from the Steam macOS build; the GOG build
-  differs, so it is not supported yet. **GOG support is in progress.**
-- Built against Cyberpunk 2077 v2.3.1 (macOS, Apple Silicon, Steam). Game updates can move offsets and
-  break it. Releases are tagged per supported game version.
+- Steam version only right now. The offsets come from the Steam macOS build; the GOG build differs, so it is not supported yet. GOG support is in progress.
+- Built against v2.3.1. Game updates can move offsets and break it. Releases are tagged per supported game version.
 - Single-player only. Modding can corrupt saves, so keep backups.
-- Install re-signs the game binary (ad-hoc) so the console can load. It is reversible at any time via
-  Steam's "Verify Integrity of Game Files".
+- Install re-signs the game binary (ad-hoc) so the console can load. This is reversible at any time via Steam's "Verify Integrity of Game Files".
 - macOS arm64 only.
 
 ## Support
 
-This is free and open source. If it saved you some hassle and you want to support development, you
-can buy me a coffee. Completely optional, and very appreciated.
+This is free and open source. If it saved you some hassle and you want to support development, you can buy me a coffee. Completely optional, and very appreciated.
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/ysrdevs)
 
-## Credits and license
+## Credits and acknowledgements
 
-MIT (see [LICENSE](LICENSE)). Built on [Dear ImGui](https://github.com/ocornut/imgui), Frida, and the
-RED4ext macOS port. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+macOS port and reverse engineering by ysrdevs (Yuvraj Singh).
+
+This project rebuilds capability pioneered by the Windows Cyberpunk 2077 modding ecosystem. The NightCity Console runtime intentionally matches the Cyber Engine Tweaks Lua/console command surface so that CET knowledge and copy-paste item codes transfer directly.
+
+Upstream originals, used under their respective MIT licenses (see each project's LICENSE for the exact name and year):
+
+- RED4ext and RED4ext.SDK by WopsS (Octavian Dima). The macOS hooking framework is a port of this work.
+- TweakXL, ArchiveXL, and Codeware by psiberx. The macOS modding integrations are ports of these projects.
+- Cyber Engine Tweaks (CET) by the CET team. The console matches CET's Lua API surface.
+
+Tools and libraries:
+
+- Frida (runtime instrumentation and in-process script host).
+- Dear ImGui by Omar Cornut (overlay UI).
+- Ghidra (reverse engineering and decompilation).
+- redscript by jac3km4.
+- Vendored libraries: nameof and semver by Neargye, PEGTL by taocpp, WIL by Microsoft, spdlog by gabime, fmt by fmtlib, simdjson, toml11, and fishhook.
+
+See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for component roles and license details.
+
+Cyberpunk 2077 is a trademark of CD PROJEKT S.A. This is an unofficial, non-commercial, single-player tool and is not affiliated with or endorsed by CD PROJEKT RED.
+
+## License
+
+MIT. See [LICENSE](LICENSE). Copyright (c) 2026 ysrdevs.
