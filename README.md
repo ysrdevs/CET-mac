@@ -50,7 +50,7 @@ See [docs/COMMANDS.md](docs/COMMANDS.md) for the full command list and known lim
 ## Requirements
 
 - Apple Silicon Mac (arm64). Intel is not supported.
-- macOS 12 (Monterey) or newer.
+- macOS 26 or newer; tested on macOS 26 and 27.
 - Cyberpunk 2077 v2.3.1, macOS, Steam build.
 - A legally-owned copy of the game. No CD PROJEKT RED files are distributed by this project.
 
